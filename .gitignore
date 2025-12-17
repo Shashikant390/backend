@@ -1,0 +1,73 @@
+# =========================
+# Python cache / bytecode
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Virtual environment
+# =========================
+venv/
+.venv/
+env/
+ENV/
+
+# =========================
+# Environment variables / secrets
+# =========================
+.env
+firebase-adminsdk.json
+
+# =========================
+# Alembic / migrations
+# =========================
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+log/
+
+# =========================
+# OS / Editor junk
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# IDEs
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Test artifacts
+# =========================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Runtime / temp files
+# =========================
+*.sqlite
+*.db
+*.tmp
+
+# =========================
+# Uploaded / generated data
+# =========================
+images/
+test/
+uploads/
+outputs/
+
+# =========================
+# Caches / misc
+# =========================
+.cache/
