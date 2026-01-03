@@ -102,3 +102,152 @@ class UserQuota(Base):
     user_id = Column(BigInteger, ForeignKey("app_user.id"), unique=True, nullable=False)
     monthly_calls = Column(Integer, default=0)
     last_reset = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+class CropHealthAnalysis(Base):
+    __tablename__ = "crop_health_analysis"
+
+    id = Column(BigInteger, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("app_user.id", ondelete="SET NULL"))
+    farm_id = Column(Integer, ForeignKey("farms.id", ondelete="SET NULL"))
+
+    detected_crop = Column(Text, nullable=True)
+    crop_confidence = Column(Text, nullable=True)  # HIGH / LOW
+
+    detected_disease = Column(Text, nullable=True)
+    scientific_name = Column(Text, nullable=True)
+    disease_type = Column(Text, nullable=True)
+
+    is_plant = Column(Boolean, default=True)
+
+    advisory = Column(JSONB, nullable=False)  # full advisory JSON
+    detection_summary = Column(JSONB, nullable=True)  # trimmed Kindwise meta
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    reference_images = relationship(
+        "DiseaseReferenceImage",
+        back_populates="analysis",
+        cascade="all, delete-orphan"
+    )
+
+    
+class DiseaseReferenceImage(Base):
+    __tablename__ = "disease_reference_image"
+
+    id = Column(BigInteger, primary_key=True)
+
+    analysis_id = Column(
+        BigInteger,
+        ForeignKey("crop_health_analysis.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    disease_name = Column(Text, nullable=False)
+    scientific_name = Column(Text, nullable=True)
+
+    image_url = Column(Text, nullable=False)
+    thumbnail_url = Column(Text, nullable=True)
+
+    license_name = Column(Text, nullable=True)
+    license_url = Column(Text, nullable=True)
+    citation = Column(Text, nullable=True)
+
+    similarity = Column(Float, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    analysis = relationship("CropHealthAnalysis", back_populates="reference_images")
+
+class UserDetectedDisease(Base):
+    __tablename__ = "user_detected_disease"
+
+    id = Column(BigInteger, primary_key=True)
+
+    user_id = Column(BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"))
+    disease_name = Column(Text, nullable=False)
+    scientific_name = Column(Text, nullable=True)
+
+    first_detected_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_detected_at = Column(DateTime(timezone=True), server_default=func.now())
+    detection_count = Column(Integer, default=1)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "disease_name", name="uq_user_disease"),
+    )
+
+
+
+
+
+class SoilAnalysisReport(Base):
+
+    __tablename__ = "soil_analysis_reports"
+
+    id = Column(Integer, primary_key=True)
+
+    user_id = Column(
+        BigInteger,
+        ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+
+    farm_id = Column(
+        Integer,
+        ForeignKey("farms.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    file_name = Column(Text, nullable=False)
+    file_hash = Column(Text, unique=True, nullable=False)
+
+    raw_text = Column(Text)
+    cleaned_text = Column(Text)
+
+    soil_parameters = Column(JSONB)
+    advisory = Column(JSONB)
+    confidence = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("AppUser")
+    farm = relationship("Farm")
+
+
+class SoilNutrientSnapshot(Base):
+    __tablename__ = "soil_nutrient_snapshot"
+
+    id = Column(Integer, primary_key=True)
+    report_id = Column(Integer, ForeignKey("soil_analysis_reports.id", ondelete="CASCADE"))
+
+    ph = Column(Float)
+    ec = Column(Float)
+    organic_carbon = Column(Float)
+
+    nitrogen = Column(Float)
+    phosphorus = Column(Float)
+    potassium = Column(Float)
+
+    zinc = Column(Float)
+    iron = Column(Float)
+    copper = Column(Float)
+    manganese = Column(Float)
+    boron = Column(Float)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    report = relationship("SoilAnalysisReport")
+
+
+
+
+
+class UserSoilHistory(Base):
+    __tablename__ = "user_soil_history"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"))
+    
+    report_id = Column(Integer, ForeignKey("soil_analysis_reports.id", ondelete="CASCADE"))
+    summary = Column(Text)
+    confidence = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

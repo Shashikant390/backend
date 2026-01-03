@@ -54,9 +54,7 @@ def http_list_collections():
         return jsonify({"error": "list_collections_failed", "detail": str(e)}), 500
 
 
-# -----------------------
-# Farms: create / read / list
-# -----------------------
+
 @api.route("/farms", methods=["POST"])
 def create_farm():
     """
@@ -134,11 +132,7 @@ def list_farms():
 
 @api.route("/catalog-score", methods=["POST"])
 def catalog_score_route():
-    """
-    Body: { geojson, start, end, limit, max_cloud, use_quick_ndvi, farm_id (optional) }
-    Stores top-N S2 scenes into scene table (upsert) if farm_id provided.
-    Returns top N list to client.
-    """
+  
     body = request.get_json(force=True, silent=True) or {}
 
     # Required inputs
@@ -322,9 +316,7 @@ def upload_to_s3(data_bytes: bytes, key: str, content_type: str = "application/o
     return f"https://{S3_BUCKET}.s3.amazonaws.com/{key}"
 
 
-# -------------------------------------------------------------------------
-# /process route — uses process_s2 and farm stored in DB
-# -------------------------------------------------------------------------
+
 @api.route("/process", methods=["POST"])
 def process_using_process_s2():
     """
@@ -349,7 +341,6 @@ def process_using_process_s2():
     except (ValueError, TypeError):
         return jsonify({"error": "invalid_farm_id"}), 400
 
-    # 1) fetch farm from DB
     try:
         farm = repos.get_farm(farm_id)
     except Exception as e:
@@ -363,10 +354,8 @@ def process_using_process_s2():
     if not geojson:
         return jsonify({"error": "farm_missing_geometry"}), 400
 
-    # 2) determine time window: prefer best scene (redis), else body start/end, else last 30 days
     start = None
     end = None
-    # try best scene in redis (overall then per-collection)
     try:
         best_key = f"scene:best:{farm_id}:overall"
         current_app.logger.info("[PROCESS_S2] Looking for best scene in redis: %s", best_key)
@@ -463,8 +452,6 @@ def list_process_results():
 
 
 
-
-
 # Tunables (adjust)
 RECENT_MAX_AGE_DAYS = getattr(config, "RECENT_MAX_AGE_DAYS", 5)
 CATALOG_LOOKBACK_DAYS = getattr(config, "CATALOG_LOOKBACK_DAYS", 30)
@@ -482,6 +469,7 @@ def _is_recent_iso(iso_ts, days=RECENT_MAX_AGE_DAYS):
     if not dt:
         return False
     return (datetime.now(timezone.utc) - dt) <= timedelta(days=days)
+
 
 def find_best_scene_from_catalog(farm_geojson, farm_id=None):
     """
@@ -537,6 +525,9 @@ def find_best_scene_from_catalog(farm_geojson, farm_id=None):
         current_app.logger.exception("find_best_scene_from_catalog failed: %s", e)
         return None
     
+# -------------------------------------------------------------------------
+# /process-or-refresh route — smart monitor for a farm   
+# -------------------------------------------------------------------------    
 
 @api.route("/process-or-refresh", methods=["POST"])
 def process_or_refresh_for_farm():
@@ -740,9 +731,7 @@ def process_or_refresh_for_farm():
         "used_end": end_iso
     })
 
-    # ------------------------------------------------------------------
-    # 7) Save to DB best-effort
-    # ------------------------------------------------------------------
+    
     try:
         start_dt = _iso_to_dt(start_iso)
         end_dt = _iso_to_dt(end_iso)
@@ -764,9 +753,7 @@ def process_or_refresh_for_farm():
     except Exception:
         current_app.logger.exception("[PROCESS_OR_REFRESH] failed saving process_result (ignored)")
 
-    # ------------------------------------------------------------------
-    # 8) Cache final result for fast re-use
-    # ------------------------------------------------------------------
+   
     try:
         cache_key = cache.make_key("process", farm_id, config.COL_S2, start_iso, end_iso)
         cache.set_json(cache_key, out, ttl=getattr(config, "CACHE_TTL_SECONDS", 86400))
@@ -776,97 +763,806 @@ def process_or_refresh_for_farm():
     return jsonify(out), 200
 
 
-from AdvisoryEngine import build_crop_advice, analyze_trend, build_current_snapshot, _extract_scene_dt_from_pr, _extract_ndvi_stats_from_pr, get_or_refresh_latest
+from AdvisoryEngine import (
+    generate_advisory_for_farm,
+  
+)
+
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from flask import request, jsonify, current_app
+
+
+
+# @api.route("/farm-insights", methods=["GET"])
+# def farm_insights_route():
+#     # 1. Debugging: Print to console to ensure request is hitting THIS function
+#     # Check your terminal when you run the request!
+#     import sys
+#     print("➡️ Hit /farm-insights endpoint", file=sys.stderr)
+
+#     farm_id_param = request.args.get("farm_id")
+#     if not farm_id_param:
+#         return jsonify({"error": "farm_id_required"}), 400
+
+#     try:
+#         farm_id = int(farm_id_param)
+#         print(f"➡️ Looking for Farm ID: {farm_id}", file=sys.stderr)
+#     except ValueError:
+#         return jsonify({"error": "invalid_farm_id"}), 400
+
+#     history_limit = int(request.args.get("history_limit", 5))
+#     history_limit = max(1, min(30, history_limit))
+
+#     # 1️⃣ Fetch farm
+#     try:
+#         farm = repos.get_farm(farm_id)
+#     except Exception as e:
+#         current_app.logger.exception("farm_insights: DB error")
+#         return jsonify({"error": "db_error", "detail": str(e)}), 500
+
+#     if not farm:
+#         print(f"❌ Farm ID {farm_id} NOT FOUND in DB", file=sys.stderr)
+#         return jsonify({"error": "farm_not_found"}), 404
+
+#     try:
+#         force_refresh = str(request.args.get("refresh", "")).lower() in ("1", "true", "yes")
+#         advisory = generate_advisory_for_farm(
+#             farm_id=farm_id,
+#             force_refresh=force_refresh
+#         )
+#     except Exception as e:
+#         current_app.logger.exception("farm_insights: advisory generation failed")
+#         return jsonify({"error": "advisory_failed", "detail": str(e)}), 500
+
+#     try:
+#         history = repos.get_process_results(farm_id, limit=history_limit)
+#     except Exception:
+#         current_app.logger.exception("farm_insights: history fetch failed")
+#         history = []
+
+#     history_out = []
+#     for pr in history:
+#         try:
+#             if isinstance(pr, dict):
+#                 result_payload = pr.get("result") or {}
+#                 scene_id = pr.get("scene_id")
+#                 health_score = pr.get("health_score")
+#                 scene_dt = pr.get("end_ts") or pr.get("start_ts")
+#             else:
+#                 result_payload = getattr(pr, "result", {}) or {}
+#                 scene_id = getattr(pr, "scene_id", None)
+#                 health_score = getattr(pr, "health_score", None)
+#                 scene_dt = getattr(pr, "end_ts", None) or getattr(pr, "start_ts", None)
+            
+#             previews = result_payload.get("previews_base64", {})
+#             ndvi_base64 = previews.get("ndvi")
+
+#             stats = result_payload.get("indices_stats", {})
+#             ndvi_stats = stats.get("ndvi", {})
+#             ndvi_mean = ndvi_stats.get("mean")
+
+#             history_out.append({
+#                 "scene_id": scene_id,
+#                 "timestamp": scene_dt,
+#                 "health_score": health_score,
+#                 "ndvi_mean": ndvi_mean,
+#                 "ndvi_map": ndvi_base64 
+#             })
+#         except Exception as e:
+#             print(f"⚠️ Error processing history item: {e}", file=sys.stderr)
+#             continue
+
+#     def get_attr(obj, key):
+#         return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+#     created_at = get_attr(farm, "created_at")
+#     meta = get_attr(farm, "meta") or {}
+    
+#     farm_summary = {
+#         "id": get_attr(farm, "id"),
+#         "name": get_attr(farm, "name"),
+#         "area_m2": get_attr(farm, "area_m2"),
+#         "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
+#         "crop": meta.get("crop_name"),
+#         "meta": meta
+#     }
+
+#     return jsonify({
+#         "farm": farm_summary,
+#         "advisory": advisory,
+#         "history": history_out
+#     }), 200
+
+from models import CropHealthAnalysis, SoilAnalysisReport
+from sqlalchemy import desc
 
 @api.route("/farm-insights", methods=["GET"])
 def farm_insights_route():
+    # 1. Debugging: Ensure request hits
+    import sys
+    print("➡️ Hit /farm-insights endpoint", file=sys.stderr)
+
     farm_id_param = request.args.get("farm_id")
     if not farm_id_param:
-        return jsonify({"error": "farm_id_required", "detail": "Pass farm_id as query param"}), 400
+        return jsonify({"error": "farm_id_required"}), 400
+
     try:
         farm_id = int(farm_id_param)
+        print(f"➡️ Looking for Farm ID: {farm_id}", file=sys.stderr)
     except ValueError:
         return jsonify({"error": "invalid_farm_id"}), 400
 
-    try:
-        history_limit = int(request.args.get("history_limit", 5))
-    except Exception:
-        history_limit = 5
+    history_limit = int(request.args.get("history_limit", 5))
     history_limit = max(1, min(30, history_limit))
 
-    # 1) fetch farm
+    # ---------------------------------------------------------
+    # 1️⃣ Fetch Farm
+    # ---------------------------------------------------------
     try:
         farm = repos.get_farm(farm_id)
     except Exception as e:
-        current_app.logger.exception("farm_insights: failed to fetch farm")
+        current_app.logger.exception("farm_insights: DB error")
         return jsonify({"error": "db_error", "detail": str(e)}), 500
+
     if not farm:
+        print(f"❌ Farm ID {farm_id} NOT FOUND in DB", file=sys.stderr)
         return jsonify({"error": "farm_not_found"}), 404
 
-    # 2) Ensure we have a recent/latest process_result (try refresh if stale)
+    # ---------------------------------------------------------
+    # 2️⃣ Satellite Advisory (Existing Logic)
+    # ---------------------------------------------------------
+    satellite_advisory = None
     try:
-        # pass force_refresh via query param ?refresh=true
         force_refresh = str(request.args.get("refresh", "")).lower() in ("1", "true", "yes")
-        latest_pr = get_or_refresh_latest(farm_id, force_refresh=force_refresh)
+        satellite_advisory = generate_advisory_for_farm(
+            farm_id=farm_id,
+            force_refresh=force_refresh
+        )
     except Exception as e:
-        current_app.logger.exception("farm_insights: failed to obtain latest process_result")
-        return jsonify({"error": "no_process_result", "detail": str(e)}), 502
+        current_app.logger.exception("farm_insights: satellite advisory failed")
+        # Don't crash entire endpoint if satellite fails, just return null/empty for that part
+        satellite_advisory = {"error": "Satellite analysis failed", "detail": str(e)}
 
-    # 3) Get history (DB) for trend/plot (we still read from DB for history)
+    # ---------------------------------------------------------
+    # 3️⃣ Fetch Satellite History (Existing Logic)
+    # ---------------------------------------------------------
     try:
         history = repos.get_process_results(farm_id, limit=history_limit)
     except Exception:
-        current_app.logger.exception("farm_insights: failed fetching history process_results")
-        # continue with single latest only
-        history = [latest_pr] if isinstance(latest_pr, dict) else []
+        current_app.logger.exception("farm_insights: history fetch failed")
+        history = []
 
-    # 4) Build current snapshot from latest_pr and farm meta
-    current_snapshot = build_current_snapshot(farm, latest_pr)
-
-    # 5) Trend analysis (history: newest-first expected)
-    trend_block = analyze_trend(history or [latest_pr])
-
-    # 6) Advisory
-    advisory_block = build_crop_advice(
-        crop_info=current_snapshot.get("crop", {}),
-        health_bucket=current_snapshot.get("health_bucket", current_snapshot.get("health_bucket", {})),
-        ndvi_level=current_snapshot.get("ndvi_level", {}),
-        trend_block=trend_block
-    )
-
-    # 7) compact history for UI
     history_out = []
     for pr in history:
-        scene_dt = _extract_scene_dt_from_pr(pr)
-        ndvi_stats = _extract_ndvi_stats_from_pr(pr)
-        res = pr.get("result") or {}
-        hs = pr.get("health_score", res.get("health_score"))
-        history_out.append({
-            "id": pr.get("id"),
-            "scene_id": pr.get("scene_id"),
-            "timestamp": scene_dt.isoformat() if scene_dt else None,
-            "health_score": hs,
-            "ndvi_mean": ndvi_stats.get("mean"),
-            "ndvi_min": ndvi_stats.get("min"),
-            "ndvi_max": ndvi_stats.get("max")
-        })
+        try:
+            # ROBUST EXTRACTION (Handles Dict vs Object)
+            if isinstance(pr, dict):
+                result_payload = pr.get("result") or {}
+                scene_id = pr.get("scene_id")
+                health_score = pr.get("health_score")
+                scene_dt = pr.get("end_ts") or pr.get("start_ts")
+            else:
+                result_payload = getattr(pr, "result", {}) or {}
+                scene_id = getattr(pr, "scene_id", None)
+                health_score = getattr(pr, "health_score", None)
+                scene_dt = getattr(pr, "end_ts", None) or getattr(pr, "start_ts", None)
+            
+            # Extract Image & Stats
+            previews = result_payload.get("previews_base64", {})
+            ndvi_base64 = previews.get("ndvi")
+            stats = result_payload.get("indices_stats", {})
+            ndvi_stats = stats.get("ndvi", {})
+            ndvi_mean = ndvi_stats.get("mean")
 
-    # 8) farm summary
+            history_out.append({
+                "scene_id": scene_id,
+                "timestamp": scene_dt,
+                "health_score": health_score,
+                "ndvi_mean": ndvi_mean,
+                "ndvi_map": ndvi_base64 
+            })
+        except Exception as e:
+            print(f"⚠️ Error processing history item: {e}", file=sys.stderr)
+            continue
+
+    # ---------------------------------------------------------
+    # 4️⃣ NEW: Fetch Latest Crop Health Analysis (Disease)
+    # ---------------------------------------------------------
+    crop_health_summary = None
+    try:
+        session = SessionLocal()
+        latest_disease = (
+            session.query(CropHealthAnalysis)
+            .filter(CropHealthAnalysis.farm_id == farm_id)
+            .order_by(desc(CropHealthAnalysis.created_at))
+            .first()
+        )
+        
+        if latest_disease:
+            # Parse the advisory JSON if it's stored as a string, or use as is
+            advisory_data = latest_disease.advisory
+            # If advisory is None/Empty, handle gracefully
+            
+            crop_health_summary = {
+                "available": True,
+                "detected_disease": latest_disease.detected_disease,
+                "severity_assessment": advisory_data.get("severity_assessment") if advisory_data else None,
+                "recommended_actions": advisory_data.get("recommended_actions") if advisory_data else None,
+                "analyzed_at": latest_disease.created_at.isoformat() if latest_disease.created_at else None
+            }
+        else:
+            crop_health_summary = {"available": False, "message": "No crop disease analysis found."}
+            
+        session.close()
+    except Exception as e:
+        current_app.logger.exception("farm_insights: crop health fetch failed")
+        crop_health_summary = {"available": False, "error": str(e)}
+
+    # ---------------------------------------------------------
+    # 5️⃣ NEW: Fetch Latest Soil Analysis Report
+    # ---------------------------------------------------------
+    soil_health_summary = None
+    try:
+        session = SessionLocal()
+        latest_soil = (
+            session.query(SoilAnalysisReport)
+            .filter(SoilAnalysisReport.farm_id == farm_id)
+            .order_by(desc(SoilAnalysisReport.created_at))
+            .first()
+        )
+
+        if latest_soil:
+            # Build a concise summary from the JSONB advisory
+            soil_advisory = latest_soil.advisory or {}
+            
+            soil_health_summary = {
+                "available": True,
+                "summary_text": soil_advisory.get("summary", "Soil report available."),
+                "deficiencies": [
+                    rec.get("issue") for rec in soil_advisory.get("recommendations", []) 
+                    if rec.get("priority") == "HIGH"
+                ], # Extract only HIGH priority issues for the summary
+                "analyzed_at": latest_soil.created_at.isoformat() if latest_soil.created_at else None
+            }
+        else:
+            soil_health_summary = {"available": False, "message": "No soil analysis report found."}
+
+        session.close()
+    except Exception as e:
+        current_app.logger.exception("farm_insights: soil health fetch failed")
+        soil_health_summary = {"available": False, "error": str(e)}
+
+
+    # ---------------------------------------------------------
+    # 6️⃣ Final Response Construction
+    # ---------------------------------------------------------
+    
+    # Helper to handle dict/obj access for Farm
+    def get_attr(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    created_at = get_attr(farm, "created_at")
+    meta = get_attr(farm, "meta") or {}
+    
     farm_summary = {
-        "id": farm.get("id"),
-        "name": farm.get("name"),
-        "area_m2": farm.get("area_m2"),
-        "created_at": farm.get("created_at").isoformat() if isinstance(farm.get("created_at"), datetime) else farm.get("created_at"),
-        "crop": current_snapshot.get("crop"),
-        "meta": farm.get("meta") or {}
+        "id": get_attr(farm, "id"),
+        "name": get_attr(farm, "name"),
+        "area_m2": get_attr(farm, "area_m2"),
+        "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
+        "crop": meta.get("crop_name"),
+        "meta": meta
     }
 
     return jsonify({
         "farm": farm_summary,
-        "current": current_snapshot,
-        "trend": trend_block,
-        "advisory": advisory_block,
+        "satellite_advisory": satellite_advisory,  # Renamed for clarity, logic unchanged
+        "crop_health": crop_health_summary,        # NEW
+        "soil_health": soil_health_summary,        # NEW
         "history": history_out
     }), 200
+
+
+
+
+
+
+from flask import request, jsonify, current_app
+import os
+from sqlalchemy import func
+
+from models import (
+    Farm,
+    CropHealthAnalysis,
+    DiseaseReferenceImage,
+    UserDetectedDisease
+)
+from db import SessionLocal
+from auth import get_current_user_or_none
+
+from processing_crop_health import (
+    images_to_base64_flask,
+    call_kindwise_identify,
+    generate_advisory_from_kindwise,
+    extract_similar_images_from_kindwise,   
+)
+
+
+@api.route("/crop-health", methods=["POST"])
+def crop_health_route():
+    session = SessionLocal()
+    try:
+        
+        current_user = get_current_user_or_none()
+        if not current_user:
+            return jsonify({"error": "unauthenticated"}), 401
+
+        
+        farm_id = request.form.get("farm_id", type=int)
+        if not farm_id:
+            return jsonify({"error": "farm_context_missing"}), 400
+
+        # Validate farm ownership
+        farm = (
+            session.query(Farm)
+            .filter_by(id=farm_id, user_id=current_user.id)
+            .one_or_none()
+        )
+        if not farm:
+            return jsonify({"error": "invalid_farm_context"}), 403
+
+        # -------------------------------------------------
+        # 3️⃣ Read images
+        # -------------------------------------------------
+        files = request.files.getlist("files")
+        if not files:
+            return jsonify({"error": "no_files_uploaded"}), 400
+
+        images_b64 = images_to_base64_flask(files)
+
+        # -------------------------------------------------
+        # 4️⃣ Call Kindwise
+        # -------------------------------------------------
+        api_key = os.getenv("KINDWISE_API_KEY")
+        if not api_key:
+            return jsonify({"error": "kindwise_api_key_missing"}), 500
+
+        kindwise_resp = call_kindwise_identify(
+            images_base64=images_b64,
+            api_key=api_key,
+        )
+
+        # -------------------------------------------------
+        # 5️⃣ Generate advisory
+        # -------------------------------------------------
+        result = generate_advisory_from_kindwise(kindwise_resp)
+
+        advisory = result.get("advisory", {})
+        summary = result.get("detection_summary", {})
+
+        # -------------------------------------------------
+        # 6️⃣ Persist CORE analysis
+        # -------------------------------------------------
+        analysis = CropHealthAnalysis(
+            user_id=current_user.id,
+            farm_id=farm_id,  # ✅ FIXED HERE
+            detected_crop=summary.get("crop_detected"),
+            crop_confidence=(
+                "LOW" if summary.get("crop_probability", 0) < 0.2 else "HIGH"
+            ),
+            detected_disease=summary.get("disease_detected"),
+            scientific_name=summary.get("scientific_name"),
+            disease_type=advisory.get("disease_type"),
+            is_plant=summary.get("is_plant", False),
+            advisory=advisory,
+            detection_summary=summary,
+        )
+
+        session.add(analysis)
+        session.flush()  # gives analysis.id
+
+        # -------------------------------------------------
+        # 7️⃣ Save reference images
+        # -------------------------------------------------
+        similar_images = extract_similar_images_from_kindwise(kindwise_resp)
+
+        for img in similar_images:
+            session.add(
+                DiseaseReferenceImage(
+                    analysis_id=analysis.id,
+                    disease_name=img["disease_name"],
+                    scientific_name=img["scientific_name"],
+                    image_url=img["image_url"],
+                    thumbnail_url=img["thumbnail_url"],
+                    license_name=img["license_name"],
+                    license_url=img["license_url"],
+                    citation=img["citation"],
+                    similarity=img["similarity"],
+                )
+            )
+
+        # -------------------------------------------------
+        # 8️⃣ Update user disease history
+        # -------------------------------------------------
+        if summary.get("disease_detected"):
+            disease_name = summary["disease_detected"]
+
+            row = (
+                session.query(UserDetectedDisease)
+                .filter_by(
+                    user_id=current_user.id,
+                    disease_name=disease_name
+                )
+                .one_or_none()
+            )
+
+            if row:
+                row.detection_count += 1
+                row.last_detected_at = func.now()
+            else:
+                session.add(
+                    UserDetectedDisease(
+                        user_id=current_user.id,
+                        disease_name=disease_name,
+                        scientific_name=summary.get("scientific_name"),
+                    )
+                )
+
+        session.commit()
+
+        # -------------------------------------------------
+        # 9️⃣ Response
+        # -------------------------------------------------
+        return jsonify({
+            **result,
+            "farm_id": farm_id,
+            "reference_images": [
+                {
+                    "disease_name": img["disease_name"],
+                    "scientific_name": img["scientific_name"],
+                    "image_url": img["image_url"],
+                    "thumbnail_url": img["thumbnail_url"],
+                    "license_name": img["license_name"],
+                    "license_url": img["license_url"],
+                    "citation": img["citation"],
+                    "similarity": img["similarity"],
+                }
+                for img in similar_images
+            ],
+            "provider_meta": {
+                "provider": "kindwise",
+                "model_version": kindwise_resp.get("model_version"),
+                "status": kindwise_resp.get("status"),
+                "created": kindwise_resp.get("created"),
+                "completed": kindwise_resp.get("completed"),
+            }
+        }), 200
+
+    except Exception as e:
+        session.rollback()
+        current_app.logger.exception("crop-health failed")
+        return jsonify({
+            "error": "crop_health_failed",
+            "detail": str(e)
+        }), 500
+
+    finally:
+        session.close()
+
+
+from flask import jsonify
+from auth import get_current_user_or_none
+
+@api.route("/crop-health/history", methods=["GET"])
+def list_crop_health_history():
+    user = get_current_user_or_none()
+    if not user:
+        return jsonify({"error": "unauthenticated"}), 401
+
+    results = repos.list_user_disease_history(user.id)
+    return jsonify(results), 200
+
+@api.route("/crop-health/analysis/<int:analysis_id>", methods=["GET"])
+def get_crop_health_analysis(analysis_id):
+    session = SessionLocal()
+    try:
+        user = get_current_user_or_none()
+        if not user:
+            return jsonify({"error": "unauthenticated"}), 401
+
+        analysis = (
+            session.query(CropHealthAnalysis)
+            .filter(
+                CropHealthAnalysis.id == analysis_id,
+                CropHealthAnalysis.user_id == user.id
+            )
+            .one_or_none()
+        )
+
+        if not analysis:
+            return jsonify({"error": "analysis_not_found"}), 404
+
+        return jsonify({
+            "analysis_id": analysis.id,
+            "farm_id": analysis.farm_id,
+            "detected_crop": analysis.detected_crop,
+            "crop_confidence": analysis.crop_confidence,
+            "detected_disease": analysis.detected_disease,
+            "scientific_name": analysis.scientific_name,
+            "disease_type": analysis.disease_type,
+            "is_plant": analysis.is_plant,
+            "advisory": analysis.advisory,
+            "detection_summary": analysis.detection_summary,
+            "reference_images": [
+                {
+                    "image_url": img.image_url,
+                    "thumbnail_url": img.thumbnail_url,
+                    "license_name": img.license_name,
+                    "license_url": img.license_url,
+                    "citation": img.citation,
+                    "similarity": img.similarity
+                }
+                for img in analysis.reference_images
+            ],
+            "created_at": analysis.created_at.isoformat()
+        }), 200
+
+    finally:
+        session.close()
+
+
+
+import hashlib
+import tempfile
+from flask import request, jsonify, current_app
+
+from db import SessionLocal
+from auth import get_current_user_or_none
+from models import SoilAnalysisReport, UserSoilHistory
+
+from Soil_Analysis.processing_soil_analysis import (
+    pdf_has_text,
+    extract_pdf_text,
+    ocr_pdf,
+    normalize_soil_text,
+    call_gemini_soil_analysis,
+    extract_text_with_fallback,
+)
+
+from sqlalchemy.exc import IntegrityError
+import hashlib
+import tempfile
+from flask import request, jsonify, current_app
+
+@api.route("/soil-analysis", methods=["POST"])
+def soil_analysis_route():
+    session = SessionLocal()
+    try:
+        current_user = get_current_user_or_none()
+
+        file = request.files.get("file")
+        farm_id = request.form.get("farm_id", type=int)
+
+        if not file:
+            return jsonify({"error": "no_file_uploaded"}), 400
+
+        if not farm_id:
+            return jsonify({"error": "farm_id_required"}), 400
+
+        pdf_bytes = file.read()
+        file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+        cached = (
+            session.query(SoilAnalysisReport)
+            .filter_by(farm_id=farm_id, file_hash=file_hash)
+            .one_or_none()
+        )
+
+        if cached:
+            return jsonify({
+                "soil_analysis": cached.soil_parameters or [],
+                "advisory": cached.advisory,
+                "confidence": cached.confidence,
+                "meta": {
+                    "cached": True,
+                    "report_id": cached.id
+                }
+            }), 200
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(pdf_bytes)
+            pdf_path = tmp.name
+
+        raw_text = extract_text_with_fallback(pdf_path)
+        cleaned_text = normalize_soil_text(raw_text)
+
+        llm_result = call_gemini_soil_analysis(cleaned_text)
+
+        soil_parameters = llm_result.get("soil_analysis") or []
+        advisory = llm_result["advisory"]
+        confidence = llm_result["confidence"]
+
+        report = SoilAnalysisReport(
+            user_id=current_user.id if current_user else None,
+            farm_id=farm_id,
+            file_name=file.filename,
+            file_hash=file_hash,
+            raw_text=raw_text,
+            cleaned_text=cleaned_text,
+            soil_parameters=soil_parameters,
+            advisory=advisory,
+            confidence=confidence,
+        )
+
+        session.add(report)
+        session.flush()  # 🔑 get report.id BEFORE commit
+
+        # ---- ✅ SAVE USER HISTORY (THIS WAS MISSING) ----
+        if current_user:
+            history = UserSoilHistory(
+                user_id=current_user.id,
+                report_id=report.id,
+                summary=advisory.get("summary"),
+                confidence=confidence
+            )
+            session.add(history)
+
+        session.commit()
+
+        return jsonify({
+            "soil_analysis": report.soil_parameters or [],
+            "advisory": advisory,
+            "confidence": confidence,
+            "meta": {
+                "cached": False,
+                "report_id": report.id
+            }
+        }), 200
+
+    except IntegrityError:
+        session.rollback()
+
+        cached = (
+            session.query(SoilAnalysisReport)
+            .filter_by(farm_id=farm_id, file_hash=file_hash)
+            .one_or_none()
+        )
+
+        if cached:
+            return jsonify({
+                "soil_analysis": cached.soil_parameters or [],
+                "advisory": cached.advisory,
+                "confidence": cached.confidence,
+                "meta": {
+                    "cached": True,
+                    "report_id": cached.id
+                }
+            }), 200
+
+        raise
+
+    except Exception as e:
+        session.rollback()
+        current_app.logger.exception("soil-analysis failed")
+        return jsonify({
+            "error": "soil_analysis_failed",
+            "detail": str(e)
+        }), 500
+
+    finally:
+        session.close()
+
+@api.route("/soil-analysis/report/<int:report_id>", methods=["GET"])
+def get_soil_analysis_report(report_id):
+    session = SessionLocal()
+    try:
+        current_user = get_current_user_or_none()
+
+        report = (
+            session.query(SoilAnalysisReport)
+            .filter_by(id=report_id)
+            .one_or_none()
+        )
+        if current_user and report.user_id != current_user.id:
+            return jsonify({"error": "forbidden"}), 403
+
+
+        if not report:
+            return jsonify({"error": "report_not_found"}), 404
+
+        if current_user and report.user_id != current_user.id:
+            return jsonify({"error": "forbidden"}), 403
+
+        return jsonify({
+            "farm_id": report.farm_id,
+            "soil_analysis": report.soil_parameters or [],
+            "advisory": report.advisory,
+            "confidence": report.confidence,
+            "meta": {
+                "report_id": report.id,
+                "created_at": report.created_at.isoformat()
+            }
+        }), 200
+
+    except Exception as e:
+        current_app.logger.exception("get_soil_analysis_report failed")
+        return jsonify({
+            "error": "failed_to_fetch_report",
+            "detail": str(e)
+        }), 500
+
+    finally:
+        session.close()
+
+@api.route("/soil-analysis/history", methods=["GET"])
+def soil_analysis_history():
+    session = SessionLocal()
+    try:
+        current_user = get_current_user_or_none()
+        if not current_user:
+            return jsonify({"error": "unauthenticated"}), 401
+
+        rows = (
+            session.query(
+                UserSoilHistory.id,
+                UserSoilHistory.report_id,
+                UserSoilHistory.summary,
+                UserSoilHistory.confidence,
+                UserSoilHistory.created_at,
+                SoilAnalysisReport.farm_id
+            )
+            .join(
+                SoilAnalysisReport,
+                SoilAnalysisReport.id == UserSoilHistory.report_id
+            )
+            .filter(UserSoilHistory.user_id == current_user.id)
+            .order_by(UserSoilHistory.created_at.desc())
+            .all()
+        )
+
+        return jsonify([
+            {
+                "id": r.id,
+                "report_id": r.report_id,
+                "farm_id": r.farm_id,
+                "summary": r.summary,
+                "confidence": r.confidence,
+                "created_at": r.created_at.isoformat()
+            }
+            for r in rows
+        ]), 200
+
+    except Exception as e:
+        current_app.logger.exception("soil-analysis-history failed")
+        return jsonify({
+            "error": "failed_to_fetch_soil_history",
+            "detail": str(e)
+        }), 500
+
+    finally:
+        session.close()
+
+
+from crop_fusion_engine import run_fusion_for_farm
+
+@api.route("/debug/fusion/<int:farm_id>", methods=["GET"])
+def debug_farm_advisory(farm_id):
+    """
+    Temporary endpoint to test advisory logic for a specific farm.
+    """
+    session = SessionLocal()
+    try:
+        # Note: user_id is passed but not strictly used in your 
+        # current fusion logic queries, so '1' acts as a placeholder.
+        advisory_result = run_fusion_for_farm(
+            session=session, 
+            farm_id=farm_id, 
+            user_id=1 
+        )
+        
+        return jsonify(advisory_result), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e), "type": str(type(e))}), 500
+    finally:
+        session.close()

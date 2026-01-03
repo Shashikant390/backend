@@ -1,10 +1,8 @@
-# config.py
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ---------- CONFIG ----------
 SH_CLIENT_ID: str = os.environ.get("SH_CLIENT_ID", "")
 SH_CLIENT_SECRET: str = os.environ.get("SH_CLIENT_SECRET", "")
 SH_ACCESS_TOKEN: str | None = os.environ.get("SH_ACCESS_TOKEN")  # optional long-lived token
@@ -22,14 +20,11 @@ PROCESS_URL: str = os.environ.get(
     "https://services.sentinel-hub.com/api/v1/process"
 )
 
-# Sentinel Hub collection ids (defaults; will be validated/adjusted at init)
 COL_S2: str | None = "sentinel-2-l2a"
 
 
-# Will be filled by init step
 AVAILABLE_COLLECTIONS: list[str] = []
 
-# Simple token cache (shared state)
 TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")

@@ -1,4 +1,3 @@
-# sh_app/cache.py
 import json
 import os
 from typing import Any, Optional
@@ -7,7 +6,6 @@ import logging
 
 logger = logging.getLogger("cache")
 
-# Use config constants if available; fall back to env
 REDIS_URL = os.environ.get("REDIS_URL", None)
 DEFAULT_TTL = int(os.environ.get("CACHE_TTL_SECONDS", 432000))  # 1 hour default
 
@@ -22,7 +20,6 @@ def get_redis_client() -> Optional[redis.Redis]:
         return None
     try:
         _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-        # quick ping to fail fast
         _redis_client.ping()
         logger.info("Connected to Redis")
         return _redis_client
@@ -32,9 +29,7 @@ def get_redis_client() -> Optional[redis.Redis]:
         return None
 
 def build_key(*parts: Any) -> str:
-    """
-    Safe key builder: joins parts with ':' after JSON-serializing complex structures.
-    """
+    
     out = []
     for p in parts:
         if p is None:

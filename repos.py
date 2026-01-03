@@ -11,7 +11,7 @@ from geoalchemy2.elements import WKTElement
 from shapely.geometry import shape
 from datetime import datetime
 import models
-from db import SessionLocal  # your SessionLocal factory
+from db import SessionLocal 
 import hashlib
 from io import BytesIO
 from PIL import Image
@@ -21,17 +21,10 @@ from flask import current_app
 LOG = logging.getLogger("sh_app.repos")
 
 
-# -------------------------
-# Session helper
-# -------------------------
 def get_session() -> Session:
     """Return a new DB Session (caller is responsible for closing if not using helper wrappers)."""
     return SessionLocal()
 
-
-# -------------------------
-# User helpers
-# -------------------------
 def get_user_by_uid(session: Session, uid: str) -> Optional[models.AppUser]:
     """Return AppUser instance or None."""
     return session.execute(select(models.AppUser).where(models.AppUser.uid == uid)).scalar_one_or_none()
@@ -42,10 +35,9 @@ def create_user_with_session(session: Session, uid: Optional[str] = None, email:
     """Create a user using the provided session (does not commit)."""
     user = models.AppUser(uid=uid, email=email, phone=phone)
     session.add(user)
-    session.flush()  # ensure id is available
+    session.flush()  
     return user
 
-# repos.py
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.exc import IntegrityError
@@ -57,7 +49,6 @@ def get_or_create_user_by_uid(
     uid: str,
     email: Optional[str] = None,
     phone: Optional[str] = None,
-    # keeping these for signature compatibility, but they are unused now:
     display_name: Optional[str] = None,
     photo_url: Optional[str] = None,
 ) -> models.AppUser:
@@ -71,7 +62,6 @@ def get_or_create_user_by_uid(
     if not uid:
         raise ValueError("uid is required")
 
-    # Look up by firebase_uid
     user = (
         session.execute(
             select(models.AppUser).where(models.AppUser.firebase_uid == uid)
@@ -93,7 +83,6 @@ def get_or_create_user_by_uid(
             session.refresh(user)
         return user
 
-    # Create new user row
     try:
         new_user = models.AppUser(
             firebase_uid=uid,
@@ -105,7 +94,6 @@ def get_or_create_user_by_uid(
         session.refresh(new_user)
         return new_user
     except IntegrityError:
-        # race: someone else created concurrently
         session.rollback()
         user = (
             session.execute(
@@ -135,18 +123,15 @@ def update_user_profile(session: Session, uid: str, updates: Dict[str, Any]) -> 
             changed = True
 
     if changed:
-        # update last_seen on profile change
         user.last_seen = datetime.utcnow()
         session.commit()
         session.refresh(user)
     else:
-        # still commit last_seen update if any
         session.commit()
         session.refresh(user)
 
     return user
 
-# Convenience wrapper that creates/closes its own session
 def get_or_create_user(uid: str, email: Optional[str] = None, phone: Optional[str] = None) -> models.AppUser:
     session = get_session()
     try:
@@ -155,9 +140,6 @@ def get_or_create_user(uid: str, email: Optional[str] = None, phone: Optional[st
         session.close()
 
 
-# -------------------------
-# Farms
-# -------------------------
 def create_farm(user_id: int, name: str, geojson: Dict, meta: Optional[Dict] = None) -> models.Farm:
     """
     Insert a farm polygon (GeoJSON) with computed bbox and area_m2.
@@ -174,13 +156,10 @@ def create_farm(user_id: int, name: str, geojson: Dict, meta: Optional[Dict] = N
         wkt = geom_shape.wkt
         geom_wkt = WKTElement(wkt, srid=4326)
 
-        # DB expressions
         geom_expr = func.ST_GeomFromText(wkt, 4326)
 
-        # compute area in meters (transform to WebMercator 3857)
         area_m2 = session.scalar(func.ST_Area(func.ST_Transform(geom_expr, 3857)))
 
-        # compute bbox WKT then wrap as WKTElement (if available)
         bbox_wkt = session.scalar(func.ST_AsText(func.ST_Envelope(geom_expr)))
         bbox_elem = WKTElement(bbox_wkt, srid=4326) if bbox_wkt else None
 
@@ -205,11 +184,7 @@ def create_farm(user_id: int, name: str, geojson: Dict, meta: Optional[Dict] = N
 
 
 def get_farm(farm_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Return farm by id as dict, with geom and bbox as GeoJSON dicts.
-
-    NOTE: returns both "geojson" (preferred) and "geom" (legacy) keys to be tolerant.
-    """
+   
     session = get_session()
     try:
         q = session.query(
@@ -224,7 +199,6 @@ def get_farm(farm_id: int) -> Optional[Dict[str, Any]]:
         geom_json = json.loads(row.geom_geojson) if row.geom_geojson else None
         bbox_json = json.loads(row.bbox_geojson) if row.bbox_geojson else None
 
-        # Return with "geojson" key (matching routes) and keep "geom" for older callers
         return {
             "id": farm_obj.id,
             "user_id": farm_obj.user_id,
@@ -242,9 +216,7 @@ def get_farm(farm_id: int) -> Optional[Dict[str, Any]]:
 
 
 def list_farms(user_id: int) -> List[Dict[str, Any]]:
-    """
-    Return list of farms for a user, with geoms as GeoJSON.
-    """
+   
     session = get_session()
     try:
         q = session.query(
@@ -307,9 +279,7 @@ def save_scene(farm_id: int, scene_id: str, collection: str, properties: Dict, s
 
 def save_process_result(farm_id: int, source: str, scene_id: Optional[str], start_ts, end_ts,
                         result: Dict, health_score: Optional[float] = None) -> models.ProcessResult:
-    """
-    Persist a processing result JSON returned from /process.
-    """
+  
     session = get_session()
     try:
         pr = models.ProcessResult(
@@ -564,5 +534,48 @@ def get_process_results(farm_id: int, limit: int = 10) -> List[Dict]:
     except Exception as e:
         LOG.exception("get_process_results failed for farm_id=%s: %s", farm_id, e)
         raise
+    finally:
+        session.close()
+
+
+
+
+
+
+from sqlalchemy import desc
+from models import UserDetectedDisease, CropHealthAnalysis
+
+def list_user_disease_history(user_id: int):
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(
+                UserDetectedDisease.disease_name,
+                UserDetectedDisease.scientific_name,
+                UserDetectedDisease.detection_count,
+                UserDetectedDisease.last_detected_at,
+                CropHealthAnalysis.id.label("analysis_id"),
+                CropHealthAnalysis.farm_id
+            )
+            .join(
+                CropHealthAnalysis,
+                CropHealthAnalysis.detected_disease == UserDetectedDisease.disease_name
+            )
+            .filter(UserDetectedDisease.user_id == user_id)
+            .order_by(UserDetectedDisease.last_detected_at.desc())
+            .all()
+        )
+
+        return [
+            {
+                "analysis_id": r.analysis_id,
+                "farm_id": r.farm_id,
+                "disease_name": r.disease_name,
+                "scientific_name": r.scientific_name,
+                "detection_count": r.detection_count,
+                "last_detected_at": r.last_detected_at.isoformat()
+            }
+            for r in rows
+        ]
     finally:
         session.close()

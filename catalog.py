@@ -15,11 +15,7 @@ LOG = logging.getLogger("sh_app.catalog")
 
 
 def refresh_available_collections() -> list:
-    """
-    Populate config.AVAILABLE_COLLECTIONS from the STAC /collections list.
-    Safe to call at startup; failures are swallowed (best-effort).
-    Returns the list of collection ids found (may be empty).
-    """
+    
     try:
         j = list_collections()
         cols = [c.get("id") for c in j.get("collections", []) if c.get("id")]
@@ -33,10 +29,7 @@ def refresh_available_collections() -> list:
 
 
 def list_collections() -> dict:
-    """
-    Return the raw /collections JSON from the Sentinel-Hub catalog.
-    Raises on HTTP errors.
-    """
+  
     token = get_sh_token()
     url = CATALOG_URL.replace("/search", "/collections")
     headers = {"Authorization": f"Bearer {token}" if token else "", "Accept": "application/json"}
@@ -54,11 +47,7 @@ def list_collections() -> dict:
 
 def catalog_search(collection: str, bbox: list, start: str, end: str, limit: int = 10, max_cloud: int | None = None,
                    cache_ttl: int | None = None) -> dict:
-    """
-    Query catalog /search for the given collection and bbox/time window.
-    Uses Redis cache (cache.make_key). Returns parsed JSON from SH catalog.
-    Only supports collection provided (we expect sentinel-2-l2a).
-    """
+    
     if collection is None:
         raise RuntimeError("catalog_search: collection is None (not available in account)")
 
@@ -108,11 +97,7 @@ def catalog_search(collection: str, bbox: list, start: str, end: str, limit: int
 
 
 def quick_ndvi_mean(bbox: list, start: str, end: str, cache_ttl: int | None = None) -> float | None:
-    """
-    Quick NDVI mean used for scoring scenes. Produces a low-res PNG from SH using EVAL_QUICK_NDVI
-    and returns the numeric mean NDVI value (float) or None on failure.
-    Results are cached per bbox/start/end.
-    """
+    
     # lazy import to avoid import-time issues / circular imports
     try:
         from evalscripts import EVAL_QUICK_NDVI
@@ -166,7 +151,6 @@ def quick_ndvi_mean(bbox: list, start: str, end: str, cache_ttl: int | None = No
 
     mean_val = float(np.nanmean(arr))
 
-    # cache numeric mean
     try:
         ttl = cache_ttl if cache_ttl is not None else 3600 * 6
         cache.set_json(key, mean_val, ttl=ttl)
@@ -178,14 +162,7 @@ def quick_ndvi_mean(bbox: list, start: str, end: str, cache_ttl: int | None = No
 
 def score_scene(item: dict, now_dt: datetime, use_quick_ndvi: bool = False,
                 bbox: list | None = None, start: str | None = None, end: str | None = None) -> tuple[float, dict]:
-    """
-    Score a single STAC item (scene) for preference ordering.
-    Returns (score, meta) where meta contains age_days, cloud_cover, quick_ndvi_mean (if requested).
-    Scoring components (tunable):
-      - 50% clear_score (based on eo:cloud_cover)
-      - 30% recency (age_days)
-      - 20% quick_ndvi (if requested)
-    """
+  
     dt = item.get("properties", {}).get("datetime") or item.get("properties", {}).get("start_datetime")
     age_days = 9999.0
     if dt:

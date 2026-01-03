@@ -1,4 +1,3 @@
-# create_db.py
 from dotenv import load_dotenv
 import os
 

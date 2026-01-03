@@ -13,7 +13,6 @@ import config as config
 
 logger = logging.getLogger("auth")
 
-# ------------ Sentinel Hub token helper (kept here for convenience) ------------
 def _fetch_new_token() -> str:
     if not config.SH_CLIENT_ID or not config.SH_CLIENT_SECRET:
         raise RuntimeError("Set SH_CLIENT_ID & SH_CLIENT_SECRET or SH_ACCESS_TOKEN in environment")
@@ -52,7 +51,7 @@ def get_sh_token() -> str:
     return _fetch_new_token()
 
 
-# ------------ Firebase init ------------
+
 _firebase_app = None
 def _init_firebase():
     global _firebase_app
@@ -71,27 +70,23 @@ def _init_firebase():
         logger.exception("Failed to initialize Firebase Admin: %s", e)
         return None
 
-# Try initialize but don't crash import if something fails
 try:
     _init_firebase()
 except Exception:
     pass
 
 
-# ------------ Helpers exposed to routes ------------
 
 def _get_auth_header_token() -> Optional[str]:
     auth = flask_request.headers.get("Authorization", "")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
-    # alternative dev header
-    return flask_request.headers.get("X-Firebase-Token")  # optional dev header
+
+    return flask_request.headers.get("X-Firebase-Token")
 
 
 def verify_firebase_token(id_token: str) -> Optional[dict]:
-    """
-    Verify a Firebase ID token and return decoded claims dict or None on failure.
-    """
+    
     try:
         decoded = fb_auth.verify_id_token(id_token)
         return decoded
@@ -101,24 +96,15 @@ def verify_firebase_token(id_token: str) -> Optional[dict]:
 
 
 def get_current_user_or_none(req=None) -> Optional[repos.models.AppUser]:
-    """
-    Primary function routes expect. Verify Firebase token in the incoming Flask request
-    (or provided `req` flask request-like object). Returns AppUser SQLAlchemy object
-    (creates row if missing) or None when unauthenticated.
-
-    Dev/testing fallback:
-      - If environment variable DEV_AUTH=true, you can also provide header X-DEV-UID: <firebase-uid>
-        or query param ?dev_uid=<firebase-uid> to emulate authentication (ONLY for local dev).
-    """
-    # allow passing request object for testability; otherwise use flask.request
+   
+ 
     r = req or flask_request
 
-    # Dev override (useful for Postman local tests)
+  
     dev_ok = os.environ.get("DEV_AUTH", "false").lower() in ("1", "true", "yes")
     if dev_ok:
         dev_uid = r.headers.get("X-DEV-UID") or r.args.get("dev_uid")
         if dev_uid:
-            # return db user (create if missing)
             session = repos.get_session()
             try:
                 user = repos.get_or_create_user_by_uid(session, dev_uid)
@@ -126,16 +112,15 @@ def get_current_user_or_none(req=None) -> Optional[repos.models.AppUser]:
             finally:
                 session.close()
 
-    # normal flow: check Authorization header for Firebase ID token
     token = _get_auth_header_token()
     if not token:
         return None
 
-    # verify token with Firebase Admin SDK
+   
     try:
         decoded = fb_auth.verify_id_token(token)
     except Exception as e:
-        # invalid/expired token
+      
         try:
             import logging
             logging.getLogger("auth").warning("Firebase token verify failed: %s", e)
@@ -147,7 +132,6 @@ def get_current_user_or_none(req=None) -> Optional[repos.models.AppUser]:
     if not firebase_uid:
         return None
 
-    # create or fetch corresponding AppUser row using a session provided to repos
     session = repos.get_session()
     try:
         user = repos.get_or_create_user_by_uid(

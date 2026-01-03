@@ -1,4 +1,3 @@
-# utils.py
 import math
 import socket
 import time
@@ -41,8 +40,6 @@ def request_with_retries(method: str, url: str, headers=None, json_payload=None,
                 if attempt > max_retries:
                     return r
                 wait = backoff_factor * (2 ** (attempt - 1))
-                # at top logger already exists
-                # inside request_with_retries replace prints:
                 logger.warning(f"[retry] {url} -> HTTP {r.status_code}. sleeping {wait}s (attempt {attempt})")
                 time.sleep(wait)
                 continue
@@ -67,18 +64,13 @@ def polygon_to_bbox(geojson: dict) -> list[float]:
         if t == "polygon":
             rings = coords
         elif t == "multipolygon":
-            # MultiPolygon -> list of polygons -> take first polygon's exterior ring
             if not coords:
                 raise ValueErroStart("Invalid MultiPolygon")
-            # flatten first polygon's first ring
             rings = coords[0][0] if isinstance(coords[0], list) and coords[0] else coords[0]
         else:
-            # fallback: try to find any numeric coordinates
-            # flatten lists until we find a coordinate pair
             def _find_ring(x):
                 if not isinstance(x, list):
                     return None
-                # dive until we find [ [lon,lat], ... ]
                 if x and isinstance(x[0], (list, tuple)) and isinstance(x[0][0], (int, float)):
                     return x
                 for i in x:
@@ -89,7 +81,6 @@ def polygon_to_bbox(geojson: dict) -> list[float]:
             rings = _find_ring(coords) or []
         if not rings:
             raise ValueError("No coordinates found")
-        # rings might be [ [lon,lat], ... ] or nested further; pick first ring if needed
         if isinstance(rings[0][0], (list, tuple)):
             ring = rings[0]
         else:
@@ -233,4 +224,4 @@ def generate_presigned_url(key: str, expires_in: int = 3600) -> str:
         logger.exception("generate_presigned_url failed for key=%s", key)
         raise
 
-# End of S3 helpers
+

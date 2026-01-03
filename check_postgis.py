@@ -1,4 +1,3 @@
-# check_postgis.py
 from db import engine
 from sqlalchemy import text
 
