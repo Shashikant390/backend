@@ -10,6 +10,7 @@ from flask import request as flask_request
 import repos
 from utils import request_with_retries
 import config as config
+import json
 
 logger = logging.getLogger("auth")
 
@@ -53,28 +54,32 @@ def get_sh_token() -> str:
 
 
 _firebase_app = None
+import json
+
+_firebase_app = None
+
 def _init_firebase():
     global _firebase_app
     if _firebase_app is not None:
         return _firebase_app
-    cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON")
-    if not cred_path:
-        logger.info("FIREBASE_CREDENTIALS_JSON not set; Firebase Admin will not be initialized.")
-        return None
+
+    firebase_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
+
     try:
-        cred = credentials.Certificate(cred_path)
+        if firebase_json:
+            # ✅ Railway / prod (env variable)
+            creds_dict = json.loads(firebase_json)
+            cred = credentials.Certificate(creds_dict)
+        else:
+            # ✅ Local dev (file on disk)
+            cred = credentials.Certificate("firebase-adminsdk.json")
+
         _firebase_app = firebase_admin.initialize_app(cred)
-        logger.info("Firebase Admin initialized.")
         return _firebase_app
+
     except Exception as e:
-        logger.exception("Failed to initialize Firebase Admin: %s", e)
-        return None
-
-try:
-    _init_firebase()
-except Exception:
-    pass
-
+        raise RuntimeError(f"Failed to initialize Firebase Admin: {e}")
+    
 
 
 def _get_auth_header_token() -> Optional[str]:
