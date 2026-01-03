@@ -28,7 +28,7 @@ AVAILABLE_COLLECTIONS: list[str] = []
 TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.environ.get("REDIS_URL")
 
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", 432000))
 
