@@ -3,6 +3,11 @@ import os
 import logging
 from db import SessionLocal
 from models import SoilAnalysisReport
+from Soil_Analysis.processing_soil_analysis import (
+    extract_text_with_fallback,
+    normalize_soil_text,
+    call_gemini_soil_analysis
+)
 
 LOG = logging.getLogger(__name__)
 
