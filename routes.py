@@ -1289,14 +1289,13 @@ def soil_analysis_route():
         job = queue.enqueue(
             run_soil_analysis,
             farm_id=farm_id,
-            pdf_path=pdf_path,
-            job_timeout=300,  # 5 min
-            meta={
-                "file_hash": file_hash,
-                "user_id": current_user.id if current_user else None,
-                "file_name": file.filename,
-            }
+            pdf_bytes=pdf_bytes,        # ✅ BYTES
+            file_hash=file_hash,
+            file_name=file.filename,
+            user_id=current_user.id if current_user else None,
+            job_timeout=300,
         )
+        
 
         # -------------------------------------------------
         # 4️⃣ Return immediately
@@ -1319,6 +1318,7 @@ def soil_analysis_route():
 
     finally:
         session.close()
+
 @api.route("/soil-analysis/report/<int:report_id>", methods=["GET"])
 def get_soil_analysis_report(report_id):
     session = SessionLocal()
@@ -1333,9 +1333,9 @@ def get_soil_analysis_report(report_id):
 
         if not report:
             return jsonify({
-                "status": "processing",
-                "message": "Soil analysis is still running"
-            }), 202
+                "status": "processing"
+        }), 202
+
 
         if current_user and report.user_id is not None and report.user_id != current_user.id:
             return jsonify({"error": "forbidden"}), 403
