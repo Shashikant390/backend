@@ -1,4 +1,3 @@
-# routes.py (S2-only simplified)
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, current_app
 import requests
@@ -1249,6 +1248,9 @@ def soil_analysis_route():
         pdf_bytes = file.read()
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
+        # -------------------------------------------------
+        # 1️⃣ Cache check (UNCHANGED)
+        # -------------------------------------------------
         cached = (
             session.query(SoilAnalysisReport)
             .filter_by(farm_id=farm_id, file_hash=file_hash)
@@ -1266,83 +1268,52 @@ def soil_analysis_route():
                 }
             }), 200
 
+        # -------------------------------------------------
+        # 2️⃣ Save PDF to disk (for worker)
+        # -------------------------------------------------
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             pdf_path = tmp.name
 
-        raw_text = extract_text_with_fallback(pdf_path)
-        cleaned_text = normalize_soil_text(raw_text)
+        # -------------------------------------------------
+        # 3️⃣ Enqueue background job (NEW)
+        # -------------------------------------------------
+        from redis import Redis
+        from rq import Queue
+        from jobs.soil_analysis_job import run_soil_analysis
+        import os
 
-        llm_result = call_gemini_soil_analysis(cleaned_text)
+        redis_conn = Redis.from_url(os.environ["REDIS_URL"])
+        queue = Queue("soil", connection=redis_conn)
 
-        soil_parameters = llm_result.get("soil_analysis") or []
-        advisory = llm_result["advisory"]
-        confidence = llm_result["confidence"]
-
-        report = SoilAnalysisReport(
-            user_id=current_user.id if current_user else None,
+        job = queue.enqueue(
+            run_soil_analysis,
             farm_id=farm_id,
-            file_name=file.filename,
-            file_hash=file_hash,
-            raw_text=raw_text,
-            cleaned_text=cleaned_text,
-            soil_parameters=soil_parameters,
-            advisory=advisory,
-            confidence=confidence,
-        )
-
-        session.add(report)
-        session.flush()  # 🔑 get report.id BEFORE commit
-
-        # ---- ✅ SAVE USER HISTORY (THIS WAS MISSING) ----
-        if current_user:
-            history = UserSoilHistory(
-                user_id=current_user.id,
-                report_id=report.id,
-                summary=advisory.get("summary"),
-                confidence=confidence
-            )
-            session.add(history)
-
-        session.commit()
-
-        return jsonify({
-            "soil_analysis": report.soil_parameters or [],
-            "advisory": advisory,
-            "confidence": confidence,
-            "meta": {
-                "cached": False,
-                "report_id": report.id
+            pdf_path=pdf_path,
+            job_timeout=300,  # 5 min
+            meta={
+                "file_hash": file_hash,
+                "user_id": current_user.id if current_user else None,
+                "file_name": file.filename,
             }
-        }), 200
-
-    except IntegrityError:
-        session.rollback()
-
-        cached = (
-            session.query(SoilAnalysisReport)
-            .filter_by(farm_id=farm_id, file_hash=file_hash)
-            .one_or_none()
         )
 
-        if cached:
-            return jsonify({
-                "soil_analysis": cached.soil_parameters or [],
-                "advisory": cached.advisory,
-                "confidence": cached.confidence,
-                "meta": {
-                    "cached": True,
-                    "report_id": cached.id
-                }
-            }), 200
-
-        raise
+        # -------------------------------------------------
+        # 4️⃣ Return immediately
+        # -------------------------------------------------
+        return jsonify({
+            "status": "queued",
+            "job_id": job.id,
+            "meta": {
+                "cached": False
+            }
+        }), 202
 
     except Exception as e:
         session.rollback()
-        current_app.logger.exception("soil-analysis failed")
+        current_app.logger.exception("soil-analysis enqueue failed")
         return jsonify({
-            "error": "soil_analysis_failed",
+            "error": "soil_analysis_enqueue_failed",
             "detail": str(e)
         }), 500
 
