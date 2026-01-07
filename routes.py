@@ -1319,7 +1319,6 @@ def soil_analysis_route():
 
     finally:
         session.close()
-
 @api.route("/soil-analysis/report/<int:report_id>", methods=["GET"])
 def get_soil_analysis_report(report_id):
     session = SessionLocal()
@@ -1331,14 +1330,14 @@ def get_soil_analysis_report(report_id):
             .filter_by(id=report_id)
             .one_or_none()
         )
-        if current_user and report.user_id != current_user.id:
-            return jsonify({"error": "forbidden"}), 403
-
 
         if not report:
-            return jsonify({"error": "report_not_found"}), 404
+            return jsonify({
+                "status": "processing",
+                "message": "Soil analysis is still running"
+            }), 202
 
-        if current_user and report.user_id != current_user.id:
+        if current_user and report.user_id is not None and report.user_id != current_user.id:
             return jsonify({"error": "forbidden"}), 403
 
         return jsonify({
@@ -1361,6 +1360,7 @@ def get_soil_analysis_report(report_id):
 
     finally:
         session.close()
+
 
 @api.route("/soil-analysis/history", methods=["GET"])
 def soil_analysis_history():
