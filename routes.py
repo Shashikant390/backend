@@ -510,8 +510,24 @@ def find_best_scene_from_catalog(farm_geojson, farm_id=None):
         return None
     
 
+
 @api.route("/process-or-refresh", methods=["POST"])
 def process_or_refresh_for_farm():
+    body = request.get_json(force=True, silent=True) or {}
+    farm_id = body.get("farm_id")
+
+    if not farm_id:
+        return jsonify({"error": "farm_id required"}), 400
+
+    try:
+        result = process_or_refresh_farm(int(farm_id))
+        return jsonify(result), 200
+    except Exception as e:
+        current_app.logger.exception("process-or-refresh failed")
+        return jsonify({"error": "process_failed", "detail": str(e)}), 500
+
+
+def process_or_refresh_farm():
     """
     Smart real-time-ish monitor for a single farm.
 

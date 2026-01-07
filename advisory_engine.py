@@ -90,6 +90,7 @@ def generate_ai_analysis(context_data: Dict[str, Any]) -> Dict[str, Any]:
         LOG.error(f"AI Generation failed: {e}")
         return None # Signal to fall back to rule-based system
 
+from AdvisoryEngine import get_or_refresh_latest
 def generate_advisory_for_farm(farm_id: int, force_refresh: bool = False, persist: bool = True) -> Dict[str, Any]:
     """
     Orchestrator: Fetches data -> Calculates Math -> Calls AI -> Saves result.

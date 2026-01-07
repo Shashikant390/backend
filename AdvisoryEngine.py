@@ -971,17 +971,13 @@ def get_or_refresh_latest(farm_id: int, force_refresh: bool = False) -> Dict:
             LOG.exception("get_or_refresh_latest: age check failed (ignored)")
 
     # 2) Attempt to call local process-or-refresh endpoint
+    # 2) Refresh using internal logic (NO HTTP)
     try:
-        resp = requests.post(PROCESS_OR_REFRESH_URL, json={"farm_id": int(farm_id)}, timeout=PROCESS_OR_REFRESH_TIMEOUT)
-        if resp.status_code == 200:
-            j = resp.json()
-            if isinstance(j, dict):
-                return j
-        else:
-            LOG.warning("get_or_refresh_latest: process-or-refresh returned %s: %s", resp.status_code, getattr(resp, "text", None))
+        from routes import process_or_refresh_farm  # or wherever you place it
+        return process_or_refresh_farm(farm_id)
     except Exception:
-        LOG.exception("get_or_refresh_latest: calling process-or-refresh failed")
-
+        LOG.exception("get_or_refresh_latest: process_or_refresh_farm failed")
+    
     if latest:
         latest.setdefault("meta", {})
         latest["meta"]["fallback_from"] = "db_cached"
