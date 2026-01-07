@@ -1229,7 +1229,6 @@ from sqlalchemy.exc import IntegrityError
 import hashlib
 import tempfile
 from flask import request, jsonify, current_app
-
 @api.route("/soil-analysis", methods=["POST"])
 def soil_analysis_route():
     session = SessionLocal()
@@ -1248,9 +1247,7 @@ def soil_analysis_route():
         pdf_bytes = file.read()
         file_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
-        # -------------------------------------------------
-        # 1️⃣ Cache check (UNCHANGED)
-        # -------------------------------------------------
+        # 🔒 HARD CACHE CHECK
         cached = (
             session.query(SoilAnalysisReport)
             .filter_by(farm_id=farm_id, file_hash=file_hash)
@@ -1259,25 +1256,12 @@ def soil_analysis_route():
 
         if cached:
             return jsonify({
-                "soil_analysis": cached.soil_parameters or [],
-                "advisory": cached.advisory,
-                "confidence": cached.confidence,
-                "meta": {
-                    "cached": True,
-                    "report_id": cached.id
-                }
+                "status": "done",
+                "report_id": cached.id,
+                "cached": True
             }), 200
 
-        # -------------------------------------------------
-        # 2️⃣ Save PDF to disk (for worker)
-        # -------------------------------------------------
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(pdf_bytes)
-            pdf_path = tmp.name
-
-        # -------------------------------------------------
-        # 3️⃣ Enqueue background job (NEW)
-        # -------------------------------------------------
+        # 🔥 ENQUEUE JOB
         from redis import Redis
         from rq import Queue
         from jobs.soil_analysis_job import run_soil_analysis
@@ -1293,20 +1277,13 @@ def soil_analysis_route():
             file_hash=file_hash,
             file_name=file.filename,
             user_id=current_user.id if current_user else None,
+            job_timeout=600,  # 10 min
         )
 
-
-        
-
-        # -------------------------------------------------
-        # 4️⃣ Return immediately
-        # -------------------------------------------------
         return jsonify({
             "status": "queued",
             "job_id": job.id,
-            "meta": {
-                "cached": False
-            }
+            "cached": False
         }), 202
 
     except Exception as e:
@@ -1319,7 +1296,6 @@ def soil_analysis_route():
 
     finally:
         session.close()
-
 @api.route("/soil-analysis/report/<int:report_id>", methods=["GET"])
 def get_soil_analysis_report(report_id):
     session = SessionLocal()
@@ -1334,22 +1310,20 @@ def get_soil_analysis_report(report_id):
 
         if not report:
             return jsonify({
-                "status": "processing"
-        }), 202
+                "status": "processing",
+                "retry_after": 5
+            }), 202
 
-
-        if current_user and report.user_id is not None and report.user_id != current_user.id:
+        if current_user and report.user_id and report.user_id != current_user.id:
             return jsonify({"error": "forbidden"}), 403
 
         return jsonify({
+            "status": "done",
             "farm_id": report.farm_id,
             "soil_analysis": report.soil_parameters or [],
             "advisory": report.advisory,
             "confidence": report.confidence,
-            "meta": {
-                "report_id": report.id,
-                "created_at": report.created_at.isoformat()
-            }
+            "created_at": report.created_at.isoformat()
         }), 200
 
     except Exception as e:
@@ -1361,6 +1335,7 @@ def get_soil_analysis_report(report_id):
 
     finally:
         session.close()
+
 
 
 @api.route("/soil-analysis/history", methods=["GET"])
