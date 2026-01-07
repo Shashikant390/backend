@@ -1,13 +1,13 @@
-import tempfile
-import os
-import logging
-from db import SessionLocal
-from models import SoilAnalysisReport
 from Soil_Analysis.processing_soil_analysis import (
     extract_text_with_fallback,
     normalize_soil_text,
-    call_gemini_soil_analysis
+    call_gemini_soil_analysis,
 )
+from models import SoilAnalysisReport, UserSoilHistory
+from db import SessionLocal
+import tempfile
+import os
+import logging
 
 LOG = logging.getLogger(__name__)
 
@@ -16,23 +16,20 @@ def run_soil_analysis(
     pdf_bytes: bytes,
     file_hash: str,
     file_name: str,
-    user_id: int | None,
+    user_id: int | None = None,
 ):
     session = SessionLocal()
-    tmp_path = None
 
     try:
-        # 1️⃣ Write bytes INSIDE worker container
+        # write PDF inside worker container
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
 
-        # 2️⃣ Process
         raw_text = extract_text_with_fallback(tmp_path)
         cleaned = normalize_soil_text(raw_text)
-        llm_result = call_gemini_soil_analysis(cleaned)
+        llm = call_gemini_soil_analysis(cleaned)
 
-        # 3️⃣ Save DB
         report = SoilAnalysisReport(
             user_id=user_id,
             farm_id=farm_id,
@@ -40,14 +37,23 @@ def run_soil_analysis(
             file_hash=file_hash,
             raw_text=raw_text,
             cleaned_text=cleaned,
-            soil_parameters=llm_result.get("soil_parameters"),
-            advisory=llm_result.get("advisory"),
-            confidence=llm_result.get("confidence"),
+            soil_parameters=llm.get("soil_parameters"),
+            advisory=llm.get("advisory"),
+            confidence=llm.get("confidence"),
         )
 
         session.add(report)
-        session.commit()
+        session.flush()
 
+        if user_id:
+            session.add(UserSoilHistory(
+                user_id=user_id,
+                report_id=report.id,
+                summary=report.advisory.get("summary"),
+                confidence=report.confidence
+            ))
+
+        session.commit()
         return {"status": "done", "report_id": report.id}
 
     except Exception:
@@ -57,5 +63,5 @@ def run_soil_analysis(
 
     finally:
         session.close()
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)

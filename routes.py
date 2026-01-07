@@ -1289,11 +1289,12 @@ def soil_analysis_route():
         job = queue.enqueue(
             run_soil_analysis,
             farm_id=farm_id,
+            pdf_bytes=pdf_bytes,
             file_hash=file_hash,
             file_name=file.filename,
-            pdf_bytes=pdf_bytes,
             user_id=current_user.id if current_user else None,
         )
+
 
         
 
