@@ -1,28 +1,34 @@
 # auth.py
 import os
 import time
+import json
 import logging
 from typing import Optional
 
 import firebase_admin
 from firebase_admin import auth as fb_auth, credentials
 from flask import request as flask_request
+
 import repos
 from utils import request_with_retries
-import config as config
-import json
+import config
 
 logger = logging.getLogger("auth")
 
+# ------------------------------------------------------------------
+# SH TOKEN (unchanged, already correct)
+# ------------------------------------------------------------------
+
 def _fetch_new_token() -> str:
     if not config.SH_CLIENT_ID or not config.SH_CLIENT_SECRET:
-        raise RuntimeError("Set SH_CLIENT_ID & SH_CLIENT_SECRET or SH_ACCESS_TOKEN in environment")
+        raise RuntimeError("Set SH_CLIENT_ID & SH_CLIENT_SECRET or SH_ACCESS_TOKEN")
 
     payload = {
         "grant_type": "client_credentials",
         "client_id": config.SH_CLIENT_ID,
-        "client_secret": config.SH_CLIENT_SECRET
+        "client_secret": config.SH_CLIENT_SECRET,
     }
+
     r = request_with_retries("POST", config.TOKEN_URL, data=payload, timeout=30)
     try:
         r.raise_for_status()
@@ -32,105 +38,126 @@ def _fetch_new_token() -> str:
         raise RuntimeError(f"token request failed: {body[:2000]}")
 
     j = r.json()
-    tok = j.get("access_token")
-    exp = j.get("expires_in", 3600)
-    if not tok:
-        raise RuntimeError("token response did not contain access_token")
+    token = j.get("access_token")
+    expires = j.get("expires_in", 3600)
 
-    config.TOKEN_CACHE["access_token"] = tok
-    config.TOKEN_CACHE["expires_at"] = time.time() + int(exp) - 30
-    return tok
+    if not token:
+        raise RuntimeError("token response missing access_token")
+
+    config.TOKEN_CACHE["access_token"] = token
+    config.TOKEN_CACHE["expires_at"] = time.time() + int(expires) - 30
+    return token
 
 
 def get_sh_token() -> str:
     if getattr(config, "SH_ACCESS_TOKEN", None):
         return config.SH_ACCESS_TOKEN
 
-    if config.TOKEN_CACHE.get("access_token") and time.time() < config.TOKEN_CACHE.get("expires_at", 0):
+    if (
+        config.TOKEN_CACHE.get("access_token")
+        and time.time() < config.TOKEN_CACHE.get("expires_at", 0)
+    ):
         return config.TOKEN_CACHE["access_token"]
 
     return _fetch_new_token()
 
 
+# ------------------------------------------------------------------
+# FIREBASE ADMIN (FIXED)
+# ------------------------------------------------------------------
 
 _firebase_app = None
-import json
 
-_firebase_app = None
 
 def _init_firebase():
+    """
+    Initialize Firebase Admin SDK exactly once per process.
+    Safe for multi-request / multi-worker usage.
+    """
     global _firebase_app
+
     if _firebase_app is not None:
+        return _firebase_app
+
+    if firebase_admin._apps:
+        _firebase_app = firebase_admin.get_app()
         return _firebase_app
 
     firebase_json = os.environ.get("FIREBASE_CREDENTIALS_JSON")
 
     try:
         if firebase_json:
-            # ✅ Railway / prod (env variable)
+            # Production (Railway / Docker env var)
             creds_dict = json.loads(firebase_json)
             cred = credentials.Certificate(creds_dict)
         else:
-            # ✅ Local dev (file on disk)
+            # Local development
             cred = credentials.Certificate("firebase-adminsdk.json")
 
         _firebase_app = firebase_admin.initialize_app(cred)
+        logger.info("Firebase Admin initialized")
         return _firebase_app
 
     except Exception as e:
+        logger.exception("Firebase Admin init failed")
         raise RuntimeError(f"Failed to initialize Firebase Admin: {e}")
-    
 
+
+# ------------------------------------------------------------------
+# AUTH HELPERS
+# ------------------------------------------------------------------
 
 def _get_auth_header_token() -> Optional[str]:
     auth = flask_request.headers.get("Authorization", "")
-    if auth and auth.lower().startswith("bearer "):
+    if auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1].strip()
 
     return flask_request.headers.get("X-Firebase-Token")
 
 
 def verify_firebase_token(id_token: str) -> Optional[dict]:
-    
+    """
+    Verifies Firebase ID token.
+    Returns decoded token dict or None.
+    """
+    _init_firebase()
+
     try:
-        decoded = fb_auth.verify_id_token(id_token)
-        return decoded
+        return fb_auth.verify_id_token(id_token)
     except Exception as e:
         logger.warning("Firebase token verification failed: %s", e)
         return None
 
 
+# ------------------------------------------------------------------
+# MAIN ENTRY USED BY ROUTES
+# ------------------------------------------------------------------
+
 def get_current_user_or_none(req=None) -> Optional[repos.models.AppUser]:
-   
- 
     r = req or flask_request
 
-  
+    # --------------------------------------------------------------
+    # DEV AUTH (explicit override)
+    # --------------------------------------------------------------
     dev_ok = os.environ.get("DEV_AUTH", "false").lower() in ("1", "true", "yes")
     if dev_ok:
         dev_uid = r.headers.get("X-DEV-UID") or r.args.get("dev_uid")
         if dev_uid:
             session = repos.get_session()
             try:
-                user = repos.get_or_create_user_by_uid(session, dev_uid)
-                return user
+                return repos.get_or_create_user_by_uid(session, dev_uid)
             finally:
                 session.close()
 
+    # --------------------------------------------------------------
+    # FIREBASE AUTH
+    # --------------------------------------------------------------
     token = _get_auth_header_token()
     if not token:
         return None
 
-   
-    try:
-        decoded = fb_auth.verify_id_token(token)
-    except Exception as e:
-      
-        try:
-            import logging
-            logging.getLogger("auth").warning("Firebase token verify failed: %s", e)
-        except Exception:
-            pass
+    decoded = verify_firebase_token(token)
+    if not decoded:
         return None
 
     firebase_uid = decoded.get("uid")
@@ -139,12 +166,11 @@ def get_current_user_or_none(req=None) -> Optional[repos.models.AppUser]:
 
     session = repos.get_session()
     try:
-        user = repos.get_or_create_user_by_uid(
+        return repos.get_or_create_user_by_uid(
             session,
             firebase_uid,
             email=decoded.get("email"),
-            phone=decoded.get("phone_number")
+            phone=decoded.get("phone_number"),
         )
-        return user
     finally:
         session.close()
