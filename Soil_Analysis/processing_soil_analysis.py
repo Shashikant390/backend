@@ -87,18 +87,7 @@ def extract_json_from_llm(text: str) -> dict:
         raise ValueError("LLM did not return JSON")
     return json.loads(match.group(1))
 
-
-# ---------------------------------------------------------
-# GEMINI CALL (STRICT)
-# ---------------------------------------------------------
-def call_gemini_soil_analysis(cleaned_text: str) -> dict:
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        temperature=0,
-        max_output_tokens=2048,
-    )
-
-    prompt = f"""
+prompt = f"""
 You are an API that extracts soil analysis data.
 
 STRICT RULES:
@@ -136,11 +125,22 @@ Soil report:
 {cleaned_text}
 """
 
+def call_gemini_soil_analysis(cleaned_text: str) -> dict:
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        temperature=0,
+        max_output_tokens=2048,
+        timeout=10,          # ✅ HARD STOP
+        max_retries=0        # ✅ NO RETRIES
+    )
+
     try:
         response = llm.invoke(prompt)
         return extract_json_from_llm(response.content)
 
     except ChatGoogleGenerativeAIError as e:
-        if "RESOURCE_EXHAUSTED" in str(e):
-            raise RuntimeError("GEMINI_QUOTA_EXCEEDED")
-        raise
+        return {
+            "error": "LLM_UNAVAILABLE",
+            "message": "Soil advisory service temporarily unavailable",
+            "confidence": "LOW"
+        }
