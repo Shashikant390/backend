@@ -12,8 +12,6 @@ def create_app() -> Flask:
     app = Flask(__name__)
     CORS(app)
 
-    init_available_collections()
-
     app.register_blueprint(api_blueprint)
     app.register_blueprint(user_bp)
     return app
