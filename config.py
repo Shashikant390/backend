@@ -30,6 +30,8 @@ TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 REDIS_URL = os.environ.get("REDIS_URL")
 
+PROCESS_OR_REFRESH_URL = os.environ.get("PROCESS_OR_REFRESH_URL")
+
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", 432000))
 
 FLASK_DEBUG = os.environ.get("FLASK_DEBUG", "1") == "1"

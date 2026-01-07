@@ -1,31 +1,30 @@
 from dotenv import load_dotenv
 import os
+from sqlalchemy import text  # <--- Import 'text' to run raw SQL
 
 load_dotenv()
 from db import engine, Base
-
-# ---------------------------------------------------------
-# CRITICAL FIX: You MUST import models here.
-# Even though you don't use 'models' directly, importing it
-# registers the classes (AppUser, Farm, etc.) with Base.
-# ---------------------------------------------------------
 import models 
 
 def main():
-    print("Checking database connection...")
-    print(f"Target Database: {engine.url}")
-    
-    # This line checks if SQLAlchemy actually 'sees' your tables
-    detected_tables = Base.metadata.tables.keys()
-    print(f"Tables detected in code: {list(detected_tables)}")
+    print("--- Database Initialization ---")
+    print(f"Target: {engine.url}")
 
-    if not detected_tables:
-        print("❌ ERROR: No tables detected! Make sure 'import models' is present.")
-        return
+    # ---------------------------------------------------------
+    # 1. Enable PostGIS (The Fix)
+    # ---------------------------------------------------------
+    print("🔧 Enabling PostGIS extension...")
+    with engine.connect() as connection:
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
+        connection.commit()  # Save the change
+    print("✅ PostGIS enabled.")
 
-    print("Creating tables (checkfirst=True)...")
+    # ---------------------------------------------------------
+    # 2. Create Tables
+    # ---------------------------------------------------------
+    print("Creating tables...")
     Base.metadata.create_all(bind=engine, checkfirst=True)
-    print("✅ Done. Tables created successfully.")
+    print("✅ Done. All tables created successfully.")
 
 if __name__ == "__main__":
     main()

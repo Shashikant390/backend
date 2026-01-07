@@ -17,6 +17,13 @@ LOCAL_HOST = getattr(config, "LOCAL_HOST", None) or "127.0.0.1"
 LOCAL_PORT = getattr(config, "LOCAL_PORT", None) or ("5000")
 PROCESS_OR_REFRESH_URL = getattr(config, "PROCESS_OR_REFRESH_URL", None) or f"http://{LOCAL_HOST}:{LOCAL_PORT}/process-or-refresh"
 
+if getattr(config, "PROCESS_OR_REFRESH_URL", None):
+    PROCESS_OR_REFRESH_URL = config.PROCESS_OR_REFRESH_URL
+else:
+    # local-only fallback
+    PROCESS_OR_REFRESH_URL = f"http://{LOCAL_HOST}:{LOCAL_PORT}/process-or-refresh"
+
+
 _DEFAULT_ADVISORY = {
     "weights": {
         "ndvi_drop": 0.35,

@@ -30,9 +30,7 @@ except Exception:
     current_logger.warning("Could not refresh AVAILABLE_COLLECTIONS at startup; processors will use config.COL_* defaults")
 
 
-# -----------------------
-# Basic health / collections
-# -----------------------
+
 @api.route("/health", methods=["GET"])
 def health():
     resolved, info = dns_lookup()
@@ -280,18 +278,6 @@ def catalog_score_route():
     return jsonify(response), 200
 
 
-
-# -----------------------
-# Process: call processing endpoint
-# ---------------------
-# constants (ensure config.PROCESS_API_URL exists or fallback)
-
-
-
-
-
-# Constants / config-driven
-
 REQUEST_TIMEOUT = getattr(config, "PROCESS_API_TIMEOUT", 30)
 CACHE_TTL = getattr(config, "CACHE_TTL_SECONDS", 86400)  # default 1 day
 S3_BUCKET = getattr(config, "S3_BUCKET", None)
@@ -421,9 +407,7 @@ def process_using_process_s2():
         current_app.logger.exception("[PROCESS_S2] processing failed for farm_id=%s", farm_id)
         return jsonify({"error": "process_failed", "detail": str(e)}), 500
 
-# -----------------------
-# Query process results
-# -----------------------
+
 @api.route("/process-result", methods=["GET"])
 def list_process_results():
     """
@@ -525,9 +509,6 @@ def find_best_scene_from_catalog(farm_geojson, farm_id=None):
         current_app.logger.exception("find_best_scene_from_catalog failed: %s", e)
         return None
     
-# -------------------------------------------------------------------------
-# /process-or-refresh route — smart monitor for a farm   
-# -------------------------------------------------------------------------    
 
 @api.route("/process-or-refresh", methods=["POST"])
 def process_or_refresh_for_farm():
@@ -773,106 +754,6 @@ from datetime import datetime
 from flask import request, jsonify, current_app
 
 
-
-# @api.route("/farm-insights", methods=["GET"])
-# def farm_insights_route():
-#     # 1. Debugging: Print to console to ensure request is hitting THIS function
-#     # Check your terminal when you run the request!
-#     import sys
-#     print("➡️ Hit /farm-insights endpoint", file=sys.stderr)
-
-#     farm_id_param = request.args.get("farm_id")
-#     if not farm_id_param:
-#         return jsonify({"error": "farm_id_required"}), 400
-
-#     try:
-#         farm_id = int(farm_id_param)
-#         print(f"➡️ Looking for Farm ID: {farm_id}", file=sys.stderr)
-#     except ValueError:
-#         return jsonify({"error": "invalid_farm_id"}), 400
-
-#     history_limit = int(request.args.get("history_limit", 5))
-#     history_limit = max(1, min(30, history_limit))
-
-#     # 1️⃣ Fetch farm
-#     try:
-#         farm = repos.get_farm(farm_id)
-#     except Exception as e:
-#         current_app.logger.exception("farm_insights: DB error")
-#         return jsonify({"error": "db_error", "detail": str(e)}), 500
-
-#     if not farm:
-#         print(f"❌ Farm ID {farm_id} NOT FOUND in DB", file=sys.stderr)
-#         return jsonify({"error": "farm_not_found"}), 404
-
-#     try:
-#         force_refresh = str(request.args.get("refresh", "")).lower() in ("1", "true", "yes")
-#         advisory = generate_advisory_for_farm(
-#             farm_id=farm_id,
-#             force_refresh=force_refresh
-#         )
-#     except Exception as e:
-#         current_app.logger.exception("farm_insights: advisory generation failed")
-#         return jsonify({"error": "advisory_failed", "detail": str(e)}), 500
-
-#     try:
-#         history = repos.get_process_results(farm_id, limit=history_limit)
-#     except Exception:
-#         current_app.logger.exception("farm_insights: history fetch failed")
-#         history = []
-
-#     history_out = []
-#     for pr in history:
-#         try:
-#             if isinstance(pr, dict):
-#                 result_payload = pr.get("result") or {}
-#                 scene_id = pr.get("scene_id")
-#                 health_score = pr.get("health_score")
-#                 scene_dt = pr.get("end_ts") or pr.get("start_ts")
-#             else:
-#                 result_payload = getattr(pr, "result", {}) or {}
-#                 scene_id = getattr(pr, "scene_id", None)
-#                 health_score = getattr(pr, "health_score", None)
-#                 scene_dt = getattr(pr, "end_ts", None) or getattr(pr, "start_ts", None)
-            
-#             previews = result_payload.get("previews_base64", {})
-#             ndvi_base64 = previews.get("ndvi")
-
-#             stats = result_payload.get("indices_stats", {})
-#             ndvi_stats = stats.get("ndvi", {})
-#             ndvi_mean = ndvi_stats.get("mean")
-
-#             history_out.append({
-#                 "scene_id": scene_id,
-#                 "timestamp": scene_dt,
-#                 "health_score": health_score,
-#                 "ndvi_mean": ndvi_mean,
-#                 "ndvi_map": ndvi_base64 
-#             })
-#         except Exception as e:
-#             print(f"⚠️ Error processing history item: {e}", file=sys.stderr)
-#             continue
-
-#     def get_attr(obj, key):
-#         return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
-
-#     created_at = get_attr(farm, "created_at")
-#     meta = get_attr(farm, "meta") or {}
-    
-#     farm_summary = {
-#         "id": get_attr(farm, "id"),
-#         "name": get_attr(farm, "name"),
-#         "area_m2": get_attr(farm, "area_m2"),
-#         "created_at": created_at.isoformat() if isinstance(created_at, datetime) else created_at,
-#         "crop": meta.get("crop_name"),
-#         "meta": meta
-#     }
-
-#     return jsonify({
-#         "farm": farm_summary,
-#         "advisory": advisory,
-#         "history": history_out
-#     }), 200
 
 from models import CropHealthAnalysis, SoilAnalysisReport
 from sqlalchemy import desc
