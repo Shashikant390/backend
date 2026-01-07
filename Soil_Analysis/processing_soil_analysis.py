@@ -87,44 +87,6 @@ def extract_json_from_llm(text: str) -> dict:
         raise ValueError("LLM did not return JSON")
     return json.loads(match.group(1))
 
-prompt = f"""
-You are an API that extracts soil analysis data.
-
-STRICT RULES:
-- VALID JSON ONLY
-- NO markdown
-- DO NOT rename keys
-- DO NOT add keys
-
-RETURN EXACT SCHEMA:
-
-{{
-  "soil_parameters": [
-    {{
-      "name": string,
-      "value": number | null,
-      "unit": string | null,
-      "status": string,
-      "notes": string
-    }}
-  ],
-  "advisory": {{
-    "summary": string,
-    "recommendations": [
-      {{
-        "issue": string,
-        "action": string,
-        "priority": "LOW" | "MEDIUM" | "HIGH"
-      }}
-    ]
-  }},
-  "confidence": "LOW" | "MEDIUM" | "HIGH"
-}}
-
-Soil report:
-{cleaned_text}
-"""
-
 def call_gemini_soil_analysis(cleaned_text: str) -> dict:
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
@@ -133,6 +95,45 @@ def call_gemini_soil_analysis(cleaned_text: str) -> dict:
         timeout=10,          # ✅ HARD STOP
         max_retries=0        # ✅ NO RETRIES
     )
+
+    
+    prompt = f"""
+    You are an API that extracts soil analysis data.
+    
+    STRICT RULES:
+    - VALID JSON ONLY
+    - NO markdown
+    - DO NOT rename keys
+    - DO NOT add keys
+    
+    RETURN EXACT SCHEMA:
+    
+    {{
+      "soil_parameters": [
+        {{
+          "name": string,
+          "value": number | null,
+          "unit": string | null,
+          "status": string,
+          "notes": string
+        }}
+      ],
+      "advisory": {{
+        "summary": string,
+        "recommendations": [
+          {{
+            "issue": string,
+            "action": string,
+            "priority": "LOW" | "MEDIUM" | "HIGH"
+          }}
+        ]
+      }},
+      "confidence": "LOW" | "MEDIUM" | "HIGH"
+    }}
+    
+    Soil report:
+    {cleaned_text}
+    """
 
     try:
         response = llm.invoke(prompt)
